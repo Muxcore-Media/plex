@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package muxcore.playback.plex.v1;
+
+option go_package = "github.com/Muxcore-Media/plex/proto/plexv1;plexv1";
+
+service PlexBridgeService {
+  rpc Status(StatusRequest) returns (StatusResponse);
+  rpc TerminateSession(TerminateSessionRequest) returns (TerminateSessionResponse);
+  rpc ListSyncLists(ListSyncListsRequest) returns (ListSyncListsResponse);
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  bool configured = 1;
+  string base_url = 2;
+  int32 active_sessions = 3;
+}
+
+message TerminateSessionRequest {
+  string session_id = 1;
+  string reason = 2;
+}
+
+message TerminateSessionResponse {
+  bool ok = 1;
+  string error = 2;
+}
+
+message ListSyncListsRequest {
+  string user_id = 1;
+  string client_id = 2;
+  bool refresh = 3;
+}
+
+message PlexSyncItemMessage {
+  string id = 1;
+  string title = 2;
+  string root_title = 3;
+  string metadata_type = 4;
+  string content_type = 5;
+  string media_type = 6;
+  string rating_key = 7;
+  string state = 8;
+  string failure = 9;
+  int32 items_count = 10;
+  int32 items_complete_count = 11;
+  int32 items_downloaded_count = 12;
+  int64 total_size_bytes = 13;
+  string video_resolution = 14;
+}
+
+message PlexSyncListMessage {
+  string id = 1;
+  string client_identifier = 2;
+  string device_user_id = 3;
+  string device_name = 4;
+  string device_platform = 5;
+  string device_product = 6;
+  repeated PlexSyncItemMessage items = 7;
+}
+
+message ListSyncListsResponse {
+  string machine_identifier = 1;
+  string updated_at = 2;
+  repeated PlexSyncListMessage lists = 3;
+}
