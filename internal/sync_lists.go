@@ -29,7 +29,7 @@ func (m *Module) plexTVGET(ctx context.Context, path string) ([]byte, int, error
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, http.NoBody)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -41,7 +41,7 @@ func (m *Module) plexTVGET(ctx context.Context, path string) ([]byte, int, error
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return nil, resp.StatusCode, err
@@ -81,21 +81,21 @@ func (m *Module) machineIdentifier(ctx context.Context) (string, error) {
 	return id, nil
 }
 
-type PlexSyncItem struct {
-	ID                    string `json:"id"`
-	Title                 string `json:"title"`
-	RootTitle             string `json:"root_title"`
-	MetadataType          string `json:"metadata_type"`
-	ContentType           string `json:"content_type"`
-	MediaType             string `json:"media_type"`
-	RatingKey             string `json:"rating_key"`
-	State                 string `json:"state"`
-	Failure               string `json:"failure,omitempty"`
-	ItemsCount            int    `json:"items_count"`
-	ItemsCompleteCount    int    `json:"items_complete_count"`
-	ItemsDownloadedCount  int    `json:"items_downloaded_count"`
-	TotalSizeBytes        int64  `json:"total_size_bytes"`
-	VideoResolution       string `json:"video_resolution,omitempty"`
+type PlexSyncItem struct { //nolint:govet // field order matches Plex sync API JSON
+	ID                   string `json:"id"`
+	Title                string `json:"title"`
+	RootTitle            string `json:"root_title"`
+	MetadataType         string `json:"metadata_type"`
+	ContentType          string `json:"content_type"`
+	MediaType            string `json:"media_type"`
+	RatingKey            string `json:"rating_key"`
+	State                string `json:"state"`
+	Failure              string `json:"failure,omitempty"`
+	ItemsCount           int    `json:"items_count"`
+	ItemsCompleteCount   int    `json:"items_complete_count"`
+	ItemsDownloadedCount int    `json:"items_downloaded_count"`
+	TotalSizeBytes       int64  `json:"total_size_bytes"`
+	VideoResolution      string `json:"video_resolution,omitempty"`
 }
 
 type PlexSyncList struct {
@@ -421,4 +421,4 @@ func timeNowRFC3339() string {
 	return timeNow().UTC().Format("2006-01-02T15:04:05Z07:00")
 }
 
-var timeNow = func() time.Time { return time.Now() }
+var timeNow = time.Now

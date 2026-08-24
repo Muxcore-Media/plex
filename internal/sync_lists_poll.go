@@ -18,7 +18,7 @@ func (m *Module) syncListsPollSec() int {
 	return 3600
 }
 
-func (m *Module) syncListsLoop() {
+func (m *Module) syncListsLoop(ctx context.Context) {
 	interval := time.Duration(m.syncListsPollSec()) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -27,7 +27,7 @@ func (m *Module) syncListsLoop() {
 		if !m.configured() {
 			return
 		}
-		if err := m.refreshSyncLists(context.Background()); err != nil {
+		if err := m.refreshSyncLists(ctx); err != nil {
 			slog.Debug("plex: sync list refresh failed", "error", err)
 			return
 		}

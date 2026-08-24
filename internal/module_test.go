@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	plexv1 "github.com/Muxcore-Media/plex/proto/plexv1"
 	playbackevents "github.com/Muxcore-Media/contracts-playback/events"
 	playbackv1 "github.com/Muxcore-Media/playback-contract/proto/playbackv1"
+	plexv1 "github.com/Muxcore-Media/plex/proto/plexv1"
 )
 
 func TestPlexSessionPollPublishesEvents(t *testing.T) {
@@ -85,7 +85,7 @@ func TestPlexSessionPollPublishesEvents(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = m.Stop(ctx) })
 
-	m.pollSessionsOnce()
+	m.pollSessionsOnce(ctx)
 	mu.Lock()
 	n := len(events)
 	mu.Unlock()
@@ -93,7 +93,7 @@ func TestPlexSessionPollPublishesEvents(t *testing.T) {
 		t.Fatalf("events: %v", events)
 	}
 
-	m.pollSessionsOnce()
+	m.pollSessionsOnce(ctx)
 	mu.Lock()
 	n = len(events)
 	e1 := events[1]
@@ -103,7 +103,7 @@ func TestPlexSessionPollPublishesEvents(t *testing.T) {
 	}
 
 	active = false
-	m.pollSessionsOnce()
+	m.pollSessionsOnce(ctx)
 	mu.Lock()
 	n = len(events)
 	e2 := events[2]
@@ -143,14 +143,14 @@ func TestTerminateSession(t *testing.T) {
 
 func TestSessionToEvent(t *testing.T) {
 	ev := sessionToEvent(plexSession{
-		RatingKey:  "99",
-		Title:      "Pilot",
-		Type:       "episode",
+		RatingKey:        "99",
+		Title:            "Pilot",
+		Type:             "episode",
 		GrandparentTitle: "Series",
-		ViewOffset: 125000,
-		Duration:   3600000,
-		User:       plexUser{ID: json.Number("7"), Title: "bob"},
-		Player:     plexPlayer{Title: "Apple TV", Address: "192.168.1.10", Platform: "tvOS"},
+		ViewOffset:       125000,
+		Duration:         3600000,
+		User:             plexUser{ID: json.Number("7"), Title: "bob"},
+		Player:           plexPlayer{Title: "Apple TV", Address: "192.168.1.10", Platform: "tvOS"},
 		TranscodeSession: map[string]any{"x": 1},
 	})
 	if ev.PositionSeconds != 125 || ev.DurationSeconds != 3600 {

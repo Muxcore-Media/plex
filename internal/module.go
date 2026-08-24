@@ -3,6 +3,7 @@ package internal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -21,41 +22,41 @@ import (
 
 const moduleVersion = "0.1.0"
 
-type Module struct {
+type Module struct { //nolint:govet // fieldalignment: lifecycle fields grouped for readability
 	plexv1.UnimplementedPlexBridgeServiceServer
 
-	mu    sync.RWMutex
-	cfgMu sync.RWMutex
-
-	id              string
-	baseURL         string
-	token           string
-	sessionsPollSec int
-	grpcAddr        string
-	httpAddr        string
-
-	grpcSrv *grpc.Server
-	grpcLis net.Listener
-	httpLis net.Listener
-
-	httpCli *http.Client
-	mc      *client.Client
-	stopCh  chan struct{}
+	grpcLis   net.Listener
+	httpLis   net.Listener
+	grpcSrv   *grpc.Server
+	httpSrv   *http.Server
+	runCancel context.CancelFunc
 
 	sessionSeen map[string]string
-	lastActive  int
+	stopCh      chan struct{}
+	mc          *client.Client
+	httpCli     *http.Client
 
-	machineID     string
-	plexTVBaseURL string
-	syncListsMu   sync.RWMutex
+	token           string
+	baseURL         string
+	httpAddr        string
+	grpcAddr        string
+	machineID       string
+	plexTVBaseURL   string
+	id              string
+	sessionsPollSec int
+	lastActive      int
+
+	syncListsMu    sync.RWMutex
 	syncListsCache syncListsSnapshot
 
-	sseEnabledFlag bool
 	sseMu          sync.RWMutex
 	sseConnected   bool
+	sseEnabledFlag bool
+
+	mu sync.RWMutex
 }
 
-type Config struct {
+type Config struct { //nolint:govet // fieldalignment: config fields grouped for readability
 	ID              string
 	BaseURL         string
 	Token           string
@@ -127,14 +128,15 @@ func (m *Module) Info() contracts.ModuleInfo {
 }
 
 func (m *Module) Init(ctx context.Context) error {
-	lis, err := net.Listen("tcp", m.grpcAddr)
+	var lc net.ListenConfig
+	lis, err := lc.Listen(ctx, "tcp", m.grpcAddr)
 	if err != nil {
 		return fmt.Errorf("listen gRPC %s: %w", m.grpcAddr, err)
 	}
 	m.grpcLis = lis
-	httpLis, err := net.Listen("tcp", m.httpAddr)
+	httpLis, err := lc.Listen(ctx, "tcp", m.httpAddr)
 	if err != nil {
-		lis.Close()
+		_ = lis.Close()
 		return fmt.Errorf("listen HTTP %s: %w", m.httpAddr, err)
 	}
 	m.httpLis = httpLis
@@ -143,6 +145,8 @@ func (m *Module) Init(ctx context.Context) error {
 }
 
 func (m *Module) Start(ctx context.Context) error {
+	runCtx, runCancel := context.WithCancel(context.WithoutCancel(ctx))
+	m.runCancel = runCancel
 	m.grpcSrv = grpc.NewServer()
 	plexv1.RegisterPlexBridgeServiceServer(m.grpcSrv, m)
 	modulesdk.RegisterSettings(m.grpcSrv, m.id, m)
@@ -158,17 +162,21 @@ func (m *Module) Start(ctx context.Context) error {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 	mux.HandleFunc("GET /sync-lists", m.handleSyncListsHTTP)
+	m.httpSrv = &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	go func() {
-		if err := http.Serve(m.httpLis, mux); err != nil && err != http.ErrServerClosed {
+		if err := m.httpSrv.Serve(m.httpLis); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("plex HTTP error", "error", err)
 		}
 	}()
 
 	go m.connectCore()
-	go m.sseLoop()
-	go m.pollSessionsLoop()
-	go m.catalogSyncLoop()
-	go m.syncListsLoop()
+	go m.sseLoop(runCtx)
+	go m.pollSessionsLoop(runCtx)
+	go m.catalogSyncLoop(runCtx)
+	go m.syncListsLoop(runCtx)
 	return nil
 }
 
@@ -181,7 +189,12 @@ func (m *Module) Stop(ctx context.Context) error {
 	if m.grpcSrv != nil {
 		m.grpcSrv.GracefulStop()
 	}
-	if m.httpLis != nil {
+	if m.runCancel != nil {
+		m.runCancel()
+	}
+	if m.httpSrv != nil {
+		_ = m.httpSrv.Shutdown(ctx)
+	} else if m.httpLis != nil {
 		_ = m.httpLis.Close()
 	}
 	m.mu.Lock()
@@ -189,7 +202,7 @@ func (m *Module) Stop(ctx context.Context) error {
 	m.mc = nil
 	m.mu.Unlock()
 	if mc != nil {
-		mc.Close()
+		_ = mc.Close()
 	}
 	slog.Info("plex bridge stopped")
 	return nil
@@ -238,7 +251,7 @@ func (m *Module) connectCore() {
 		}
 		m.mu.Lock()
 		if m.mc != nil {
-			m.mc.Close()
+			_ = m.mc.Close()
 		}
 		m.mc = c
 		m.mu.Unlock()

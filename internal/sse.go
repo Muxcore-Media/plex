@@ -14,18 +14,20 @@ import (
 	playbackevents "github.com/Muxcore-Media/contracts-playback/events"
 )
 
-type playSessionStateNotification struct {
+type playSessionStateNotification struct { //nolint:govet // field order matches Plex SSE payload
 	SessionKey string `json:"sessionKey"`
 	State      string `json:"state"`
 	ViewOffset int64  `json:"viewOffset"`
 	RatingKey  string `json:"ratingKey"`
 }
 
-func (m *Module) sseLoop() {
+func (m *Module) sseLoop(ctx context.Context) {
 	backoff := time.Second
 	for {
 		select {
 		case <-m.stopCh:
+			return
+		case <-ctx.Done():
 			return
 		default:
 		}
@@ -33,17 +35,21 @@ func (m *Module) sseLoop() {
 			select {
 			case <-m.stopCh:
 				return
+			case <-ctx.Done():
+				return
 			case <-time.After(time.Second):
 			}
 			continue
 		}
-		err := m.runSSEConnection()
+		err := m.runSSEConnection(ctx)
 		m.setSSEConnected(false)
 		if err != nil {
 			slog.Debug("plex: sse disconnected", "error", err)
 		}
 		select {
 		case <-m.stopCh:
+			return
+		case <-ctx.Done():
 			return
 		case <-time.After(backoff):
 		}
@@ -53,12 +59,12 @@ func (m *Module) sseLoop() {
 	}
 }
 
-func (m *Module) runSSEConnection() error {
+func (m *Module) runSSEConnection(ctx context.Context) error {
 	m.mu.RLock()
 	base, token := m.baseURL, m.token
 	m.mu.RUnlock()
 	reqURL := base + "/:/eventsource/notifications?X-Plex-Token=" + token
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, reqURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -72,7 +78,7 @@ func (m *Module) runSSEConnection() error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("plex sse status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -83,9 +89,11 @@ func (m *Module) runSSEConnection() error {
 		select {
 		case <-m.stopCh:
 			return io.EOF
+		case <-ctx.Done():
+			return ctx.Err()
 		default:
 		}
-		m.handleSSEData(eventName, data)
+		m.handleSSEData(ctx, eventName, data)
 		return nil
 	})
 }
@@ -121,7 +129,7 @@ func readSSEStream(r io.Reader, onEvent func(eventName, data string) error) erro
 	return nil
 }
 
-func (m *Module) handleSSEData(eventName, data string) {
+func (m *Module) handleSSEData(ctx context.Context, eventName, data string) {
 	if strings.TrimSpace(data) == "" {
 		return
 	}
@@ -132,13 +140,13 @@ func (m *Module) handleSSEData(eventName, data string) {
 	if payload, ok := raw["PlaySessionStateNotification"]; ok {
 		var direct playSessionStateNotification
 		if err := json.Unmarshal(payload, &direct); err == nil {
-			m.handlePlaySessionNotification(direct)
+			m.handlePlaySessionNotification(ctx, direct)
 			return
 		}
 		var list []playSessionStateNotification
 		if err := json.Unmarshal(payload, &list); err == nil {
 			for _, n := range list {
-				m.handlePlaySessionNotification(n)
+				m.handlePlaySessionNotification(ctx, n)
 			}
 			return
 		}
@@ -150,21 +158,21 @@ func (m *Module) handleSSEData(eventName, data string) {
 	if err := json.Unmarshal([]byte(data), &container); err == nil && len(container.PlaySessionStateNotification) > 0 {
 		var direct playSessionStateNotification
 		if err := json.Unmarshal(container.PlaySessionStateNotification, &direct); err == nil {
-			m.handlePlaySessionNotification(direct)
+			m.handlePlaySessionNotification(ctx, direct)
 			return
 		}
 		var list []playSessionStateNotification
 		if err := json.Unmarshal(container.PlaySessionStateNotification, &list); err == nil {
 			for _, n := range list {
-				m.handlePlaySessionNotification(n)
+				m.handlePlaySessionNotification(ctx, n)
 			}
 		}
 	}
 	_ = eventName
 }
 
-func (m *Module) handlePlaySessionNotification(n playSessionStateNotification) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (m *Module) handlePlaySessionNotification(ctx context.Context, n playSessionStateNotification) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	switch strings.ToLower(strings.TrimSpace(n.State)) {
 	case "stopped":
@@ -173,9 +181,7 @@ func (m *Module) handlePlaySessionNotification(n playSessionStateNotification) {
 			return
 		}
 		m.mu.Lock()
-		if _, ok := m.sessionSeen[key]; ok {
-			delete(m.sessionSeen, key)
-		}
+		delete(m.sessionSeen, key)
 		m.mu.Unlock()
 		m.publishPlayback(ctx, playbackevents.EventPlaybackStopped, playbackEventPayload{
 			SessionID:  key,
@@ -234,7 +240,7 @@ func (m *Module) setSSEConnected(v bool) {
 
 func (m *Module) sseConnectedNow() bool {
 	m.sseMu.RLock()
-	defer m.sseMu.Unlock()
+	defer m.sseMu.RUnlock()
 	return m.sseConnected
 }
 

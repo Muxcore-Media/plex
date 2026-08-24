@@ -9,19 +9,19 @@ import (
 	playbackv1 "github.com/Muxcore-Media/playback-contract/proto/playbackv1"
 )
 
-type libraryCatalogPayload struct {
-	Action        string `json:"action"`
-	ServerID      string `json:"server_id"`
-	ServerType    string `json:"server_type"`
-	ItemID        string `json:"item_id"`
-	MediaType     string `json:"media_type,omitempty"`
-	MuxcoreID     string `json:"muxcore_id,omitempty"`
-	Title         string `json:"title,omitempty"`
-	MediaPath     string `json:"media_path,omitempty"`
-	LibraryName   string `json:"library_name,omitempty"`
-	FileSizeBytes int64  `json:"file_size_bytes,omitempty"`
+type libraryCatalogPayload struct { //nolint:govet // field order matches library catalog event JSON
+	Action          string `json:"action"`
+	ServerID        string `json:"server_id"`
+	ServerType      string `json:"server_type"`
+	ItemID          string `json:"item_id"`
+	MediaType       string `json:"media_type,omitempty"`
+	MuxcoreID       string `json:"muxcore_id,omitempty"`
+	Title           string `json:"title,omitempty"`
+	MediaPath       string `json:"media_path,omitempty"`
+	LibraryName     string `json:"library_name,omitempty"`
+	FileSizeBytes   int64  `json:"file_size_bytes,omitempty"`
 	VideoResolution string `json:"video_resolution,omitempty"`
-	ParentID      string `json:"parent_id,omitempty"`
+	ParentID        string `json:"parent_id,omitempty"`
 }
 
 func (m *Module) publishLibraryCatalogEvent(ctx context.Context, action string, item libraryCatalogPayload) {
@@ -41,26 +41,28 @@ func (m *Module) publishLibraryCatalogEvent(ctx context.Context, action string, 
 }
 
 type plexLibrarySection struct {
-	Key  json.Number `json:"key"`
-	Type string      `json:"type"`
-	Title string     `json:"title"`
+	Key   json.Number `json:"key"`
+	Type  string      `json:"type"`
+	Title string      `json:"title"`
 }
 
-type plexMediaItem struct {
+type plexMediaItem struct { //nolint:govet // field order matches Plex API JSON
 	RatingKey       string      `json:"ratingKey"`
 	ParentRatingKey string      `json:"parentRatingKey"`
 	Type            string      `json:"type"`
-	Title     string      `json:"title"`
-	Size      int64       `json:"size"`
-	Media     []plexMedia `json:"Media"`
+	Title           string      `json:"title"`
+	Size            int64       `json:"size"`
+	Media           []plexMedia `json:"Media"`
+}
+
+type plexMediaPart struct { //nolint:govet // field order matches Plex API JSON
+	Size int64  `json:"size"`
+	File string `json:"file"`
 }
 
 type plexMedia struct {
-	VideoResolution string `json:"videoResolution"`
-	Part []struct {
-		Size int64  `json:"size"`
-		File string `json:"file"`
-	} `json:"Part"`
+	VideoResolution string          `json:"videoResolution"`
+	Part            []plexMediaPart `json:"Part"`
 }
 
 func (m *Module) listPlexLibrarySections(ctx context.Context) ([]plexLibrarySection, error) {
