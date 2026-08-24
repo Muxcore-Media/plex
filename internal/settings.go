@@ -102,7 +102,7 @@ func sseSettingValue(m *Module) string {
 func (m *Module) Status(ctx context.Context, _ *plexv1.StatusRequest) (*plexv1.StatusResponse, error) {
 	m.mu.RLock()
 	base := m.baseURL
-	active := int32(m.lastActive)
+	active := int32(m.lastActive) //nolint:gosec // active session count from Plex fits int32 status field
 	m.mu.RUnlock()
 	return &plexv1.StatusResponse{
 		Configured:     m.configured(),
@@ -123,7 +123,7 @@ func (m *Module) TerminateSession(ctx context.Context, req *plexv1.TerminateSess
 	path := "/status/sessions/terminate?" + q.Encode()
 	_, code, err := m.plexGET(ctx, path)
 	if err != nil {
-		return &plexv1.TerminateSessionResponse{Ok: false, Error: err.Error()}, nil
+		return &plexv1.TerminateSessionResponse{Ok: false, Error: err.Error()}, nil //nolint:nilerr // application-level failure encoded in response
 	}
 	if code >= 300 {
 		return &plexv1.TerminateSessionResponse{Ok: false, Error: fmt.Sprintf("plex terminate status %d", code)}, nil

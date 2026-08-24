@@ -9,29 +9,29 @@ import (
 	playbackv1 "github.com/Muxcore-Media/playback-contract/proto/playbackv1"
 )
 
-type playbackEventPayload struct {
-	ItemID          string `json:"item_id"`
-	PlexRatingKey   string `json:"plex_rating_key"`
-	UserID          string `json:"user_id"`
-	UserName        string `json:"user_name"`
-	SessionID       string `json:"session_id"`
-	PositionSeconds int64  `json:"position_seconds"`
-	DurationSeconds int64  `json:"duration_seconds"`
-	Title           string `json:"title"`
-	MediaType       string `json:"media_type"`
-	ServerType      string `json:"server_type"`
-	IsTranscode     bool   `json:"is_transcode,omitempty"`
-	PlayMethod      string `json:"play_method,omitempty"`
-	Platform        string `json:"platform,omitempty"`
-	Device          string `json:"device,omitempty"`
-	Player          string `json:"player,omitempty"`
-	IPAddress       string `json:"ip_address,omitempty"`
+type playbackEventPayload struct { //nolint:govet // field order matches playback event JSON
+	ItemID           string `json:"item_id"`
+	PlexRatingKey    string `json:"plex_rating_key"`
+	UserID           string `json:"user_id"`
+	UserName         string `json:"user_name"`
+	SessionID        string `json:"session_id"`
+	PositionSeconds  int64  `json:"position_seconds"`
+	DurationSeconds  int64  `json:"duration_seconds"`
+	Title            string `json:"title"`
+	MediaType        string `json:"media_type"`
+	ServerType       string `json:"server_type"`
+	IsTranscode      bool   `json:"is_transcode,omitempty"`
+	PlayMethod       string `json:"play_method,omitempty"`
+	Platform         string `json:"platform,omitempty"`
+	Device           string `json:"device,omitempty"`
+	Player           string `json:"player,omitempty"`
+	IPAddress        string `json:"ip_address,omitempty"`
 	StreamResolution string `json:"stream_resolution,omitempty"`
-	VideoHeight     int    `json:"video_height,omitempty"`
-	VideoWidth      int    `json:"video_width,omitempty"`
+	VideoHeight      int    `json:"video_height,omitempty"`
+	VideoWidth       int    `json:"video_width,omitempty"`
 }
 
-func (m *Module) pollSessionsLoop() {
+func (m *Module) pollSessionsLoop(ctx context.Context) {
 	for {
 		m.mu.RLock()
 		sec := m.sessionsPollSec
@@ -45,7 +45,7 @@ func (m *Module) pollSessionsLoop() {
 				}
 			} else {
 				wait = time.Duration(sec) * time.Second
-				m.pollSessionsOnce()
+				m.pollSessionsOnce(ctx)
 			}
 		}
 		select {
@@ -56,8 +56,8 @@ func (m *Module) pollSessionsLoop() {
 	}
 }
 
-func (m *Module) pollSessionsOnce() {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+func (m *Module) pollSessionsOnce(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	sessions, err := m.listSessions(ctx)
 	if err != nil {
@@ -102,28 +102,28 @@ func (m *Module) pollSessionsOnce() {
 }
 
 func sessionToEvent(s plexSession) playbackEventPayload {
-	isTranscode := s.TranscodeSession != nil && len(s.TranscodeSession) > 0
+	isTranscode := len(s.TranscodeSession) > 0
 	playMethod := "DirectPlay"
 	if isTranscode {
 		playMethod = "Transcode"
 	}
 	return playbackEventPayload{
-		ItemID:          s.RatingKey,
-		PlexRatingKey:   s.RatingKey,
-		UserID:          s.User.ID.String(),
-		UserName:        s.User.Title,
-		SessionID:       s.SessionKey,
-		PositionSeconds: msToSeconds(s.ViewOffset),
-		DurationSeconds: msToSeconds(s.Duration),
-		Title:           displayTitle(s),
-		MediaType:       s.Type,
-		ServerType:      "plex",
-		IsTranscode:     isTranscode,
-		PlayMethod:      playMethod,
-		Platform:        firstNonEmpty(s.Player.Platform, s.Player.Title),
-		Device:          s.Player.Title,
-		Player:          s.Player.Title,
-		IPAddress:       s.Player.Address,
+		ItemID:           s.RatingKey,
+		PlexRatingKey:    s.RatingKey,
+		UserID:           s.User.ID.String(),
+		UserName:         s.User.Title,
+		SessionID:        s.SessionKey,
+		PositionSeconds:  msToSeconds(s.ViewOffset),
+		DurationSeconds:  msToSeconds(s.Duration),
+		Title:            displayTitle(s),
+		MediaType:        s.Type,
+		ServerType:       "plex",
+		IsTranscode:      isTranscode,
+		PlayMethod:       playMethod,
+		Platform:         firstNonEmpty(s.Player.Platform, s.Player.Title),
+		Device:           s.Player.Title,
+		Player:           s.Player.Title,
+		IPAddress:        s.Player.Address,
 		StreamResolution: streamResolutionFromPlexSession(s),
 	}
 }

@@ -16,7 +16,7 @@ func (m *Module) plexGET(ctx context.Context, path string) ([]byte, int, error) 
 	if base == "" || token == "" {
 		return nil, 0, fmt.Errorf("plex not configured")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, http.NoBody)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -28,7 +28,7 @@ func (m *Module) plexGET(ctx context.Context, path string) ([]byte, int, error) 
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
 		return nil, resp.StatusCode, err
@@ -61,7 +61,7 @@ func (m *Module) probeIdentity(ctx context.Context) error {
 	return nil
 }
 
-type plexSession struct {
+type plexSession struct { //nolint:govet // field order matches Plex API JSON grouping
 	SessionKey       string         `json:"sessionKey"`
 	RatingKey        string         `json:"ratingKey"`
 	Title            string         `json:"title"`

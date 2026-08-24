@@ -18,7 +18,7 @@ func (m *Module) catalogSyncIntervalSec() int {
 	return 6 * 3600
 }
 
-func (m *Module) catalogSyncLoop() {
+func (m *Module) catalogSyncLoop(ctx context.Context) {
 	interval := time.Duration(m.catalogSyncIntervalSec()) * time.Second
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -27,7 +27,7 @@ func (m *Module) catalogSyncLoop() {
 		if !m.configured() {
 			return
 		}
-		n, err := m.syncLibraryCatalog(context.Background())
+		n, err := m.syncLibraryCatalog(ctx)
 		if err != nil {
 			slog.Debug("plex: library catalog sync failed", "error", err)
 			return

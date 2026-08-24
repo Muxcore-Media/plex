@@ -63,7 +63,7 @@ func TestHandleSSEPlaySessionNotification(t *testing.T) {
 	t.Cleanup(func() { _ = m.Stop(ctx) })
 
 	data := `{"PlaySessionStateNotification":{"sessionKey":"99","state":"playing","ratingKey":"12345"}}`
-	m.handleSSEData("playing", data)
+	m.handleSSEData(ctx, "playing", data)
 	mu.Lock()
 	n := len(events)
 	e0 := events[0]
@@ -72,7 +72,7 @@ func TestHandleSSEPlaySessionNotification(t *testing.T) {
 		t.Fatalf("events: %v", events)
 	}
 
-	m.handleSSEData("playing", `{"PlaySessionStateNotification":{"sessionKey":"99","state":"stopped"}}`)
+	m.handleSSEData(ctx, "playing", `{"PlaySessionStateNotification":{"sessionKey":"99","state":"stopped"}}`)
 	mu.Lock()
 	n = len(events)
 	e1 := events[1]

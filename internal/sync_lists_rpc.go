@@ -50,9 +50,9 @@ func syncListsToProto(snap syncListsSnapshot) *plexv1.ListSyncListsResponse {
 				RatingKey:            item.RatingKey,
 				State:                item.State,
 				Failure:              item.Failure,
-				ItemsCount:           int32(item.ItemsCount),
-				ItemsCompleteCount:   int32(item.ItemsCompleteCount),
-				ItemsDownloadedCount: int32(item.ItemsDownloadedCount),
+				ItemsCount:           int32(item.ItemsCount),           //nolint:gosec // Plex sync counts fit int32 proto fields
+				ItemsCompleteCount:   int32(item.ItemsCompleteCount),   //nolint:gosec // Plex sync counts fit int32 proto fields
+				ItemsDownloadedCount: int32(item.ItemsDownloadedCount), //nolint:gosec // Plex sync counts fit int32 proto fields
 				TotalSizeBytes:       item.TotalSizeBytes,
 				VideoResolution:      item.VideoResolution,
 			})
