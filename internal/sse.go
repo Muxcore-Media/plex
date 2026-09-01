@@ -14,6 +14,8 @@ import (
 	playbackevents "github.com/Muxcore-Media/contracts-playback/events"
 )
 
+const sseIdleTimeout = 120 * time.Second
+
 type playSessionStateNotification struct { //nolint:govet // field order matches Plex SSE payload
 	SessionKey string `json:"sessionKey"`
 	State      string `json:"state"`
@@ -59,11 +61,15 @@ func (m *Module) sseLoop(ctx context.Context) {
 	}
 }
 
+func plexNotificationsURL(base string) string {
+	return base + "/:/eventsource/notifications"
+}
+
 func (m *Module) runSSEConnection(ctx context.Context) error {
 	m.mu.RLock()
 	base, token := m.baseURL, m.token
 	m.mu.RUnlock()
-	reqURL := base + "/:/eventsource/notifications?X-Plex-Token=" + token
+	reqURL := plexNotificationsURL(base)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, http.NoBody)
 	if err != nil {
 		return err
@@ -73,7 +79,7 @@ func (m *Module) runSSEConnection(ctx context.Context) error {
 	req.Header.Set("X-Plex-Product", "MuxCore")
 	req.Header.Set("X-Plex-Client-Identifier", "muxcore-plex-bridge")
 
-	sseClient := &http.Client{}
+	sseClient := &http.Client{Timeout: 0}
 	resp, err := sseClient.Do(req)
 	if err != nil {
 		return err
@@ -84,18 +90,50 @@ func (m *Module) runSSEConnection(ctx context.Context) error {
 		return fmt.Errorf("plex sse status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	m.setSSEConnected(true)
+	m.touchSSEActivity()
 	slog.Info("plex: sse connected")
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go m.watchSSEIdle(streamCtx, cancel)
+
 	return readSSEStream(resp.Body, func(eventName, data string) error {
 		select {
 		case <-m.stopCh:
 			return io.EOF
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-streamCtx.Done():
+			return streamCtx.Err()
 		default:
 		}
+		m.touchSSEActivity()
 		m.handleSSEData(ctx, eventName, data)
 		return nil
 	})
+}
+
+func (m *Module) watchSSEIdle(ctx context.Context, cancel context.CancelFunc) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.sseActivityMu.Lock()
+			last := m.sseLastActivity
+			m.sseActivityMu.Unlock()
+			if time.Since(last) > sseIdleTimeout {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+func (m *Module) touchSSEActivity() {
+	m.sseActivityMu.Lock()
+	m.sseLastActivity = time.Now()
+	m.sseActivityMu.Unlock()
 }
 
 func readSSEStream(r io.Reader, onEvent func(eventName, data string) error) error {
@@ -240,7 +278,7 @@ func (m *Module) setSSEConnected(v bool) {
 
 func (m *Module) sseConnectedNow() bool {
 	m.sseMu.RLock()
-	defer m.sseMu.RUnlock()
+	defer m.sseMu.Unlock()
 	return m.sseConnected
 }
 

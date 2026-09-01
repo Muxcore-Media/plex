@@ -6,10 +6,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
-func (m *Module) plexGET(ctx context.Context, path string) ([]byte, int, error) {
+type plexGETHeaders struct {
+	ContainerStart int
+	ContainerSize  int
+}
+
+func (m *Module) plexGET(ctx context.Context, path string, headers *plexGETHeaders) ([]byte, int, error) {
 	m.mu.RLock()
 	base, token := m.baseURL, m.token
 	m.mu.RUnlock()
@@ -24,6 +30,14 @@ func (m *Module) plexGET(ctx context.Context, path string) ([]byte, int, error) 
 	req.Header.Set("X-Plex-Token", token)
 	req.Header.Set("X-Plex-Product", "MuxCore")
 	req.Header.Set("X-Plex-Client-Identifier", "muxcore-plex-bridge")
+	if headers != nil {
+		if headers.ContainerSize > 0 {
+			req.Header.Set("X-Plex-Container-Size", strconv.Itoa(headers.ContainerSize))
+		}
+		if headers.ContainerStart > 0 {
+			req.Header.Set("X-Plex-Container-Start", strconv.Itoa(headers.ContainerStart))
+		}
+	}
 	resp, err := m.httpCli.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -37,7 +51,7 @@ func (m *Module) plexGET(ctx context.Context, path string) ([]byte, int, error) 
 }
 
 func (m *Module) probeIdentity(ctx context.Context) error {
-	body, code, err := m.plexGET(ctx, "/identity")
+	body, code, err := m.plexGET(ctx, "/identity", nil)
 	if err != nil {
 		return err
 	}
@@ -86,10 +100,11 @@ type plexPlayer struct {
 	Title    string `json:"title"`
 	Address  string `json:"address"`
 	Platform string `json:"platform"`
+	State    string `json:"state"`
 }
 
 func (m *Module) listSessions(ctx context.Context) ([]plexSession, error) {
-	body, code, err := m.plexGET(ctx, "/status/sessions")
+	body, code, err := m.plexGET(ctx, "/status/sessions", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -122,4 +137,15 @@ func msToSeconds(ms int64) int64 {
 		return 0
 	}
 	return ms / 1000
+}
+
+func sessionPaused(s plexSession) bool {
+	state := strings.ToLower(strings.TrimSpace(s.Player.State))
+	return state == "paused"
+}
+
+func (m *Module) sessionState(sessionKey string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.sessionSeen[sessionKey]
 }

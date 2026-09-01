@@ -5,6 +5,10 @@ import (
 )
 
 func (m *Module) handleSyncListsHTTP(w http.ResponseWriter, r *http.Request) {
+	if !m.checkHTTPSecret(r.Header.Get(headerPlexBridgeSecret)) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	if !m.configured() {
 		http.Error(w, "plex not configured", http.StatusServiceUnavailable)
 		return

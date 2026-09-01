@@ -8,6 +8,8 @@ service PlexBridgeService {
   rpc Status(StatusRequest) returns (StatusResponse);
   rpc TerminateSession(TerminateSessionRequest) returns (TerminateSessionResponse);
   rpc ListSyncLists(ListSyncListsRequest) returns (ListSyncListsResponse);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc PlayURL(PlayURLRequest) returns (PlayURLResponse);
 }
 
 message StatusRequest {}
@@ -16,6 +18,8 @@ message StatusResponse {
   bool configured = 1;
   string base_url = 2;
   int32 active_sessions = 3;
+  bool sse_connected = 4;
+  string machine_id = 5;
 }
 
 message TerminateSessionRequest {
@@ -65,4 +69,30 @@ message ListSyncListsResponse {
   string machine_identifier = 1;
   string updated_at = 2;
   repeated PlexSyncListMessage lists = 3;
+}
+
+message ListSessionsRequest {}
+
+message PlexSessionMessage {
+  string session_id = 1;
+  string user_id = 2;
+  string user_name = 3;
+  string item_id = 4;
+  string title = 5;
+  int64 position_seconds = 6;
+  int64 duration_seconds = 7;
+  bool paused = 8;
+  string device = 9;
+}
+
+message ListSessionsResponse {
+  repeated PlexSessionMessage sessions = 1;
+}
+
+message PlayURLRequest {
+  string rating_key = 1;
+}
+
+message PlayURLResponse {
+  string url = 1;
 }

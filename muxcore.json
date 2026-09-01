@@ -11,6 +11,17 @@
     "playback",
     "settings"
   ],
-  "contracts": [],
+  "contracts": [
+    {
+      "repo": "github.com/Muxcore-Media/contracts-playback",
+      "interface": "events",
+      "version": "v0.1.0"
+    },
+    {
+      "repo": "github.com/Muxcore-Media/playback-contract",
+      "interface": "playbackv1",
+      "version": "v0.1.0"
+    }
+  ],
   "minCoreVersion": "0.5.0"
 }

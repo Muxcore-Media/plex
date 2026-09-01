@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	playbackevents "github.com/Muxcore-Media/contracts-playback/events"
@@ -39,11 +38,8 @@ func TestHandleSSEPlaySessionNotification(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var mu sync.Mutex
 	var events []string
 	testPublishHook = func(_ context.Context, eventType, _ string, _ []byte) error {
-		mu.Lock()
-		defer mu.Unlock()
 		events = append(events, eventType)
 		return nil
 	}
@@ -55,6 +51,7 @@ func TestHandleSSEPlaySessionNotification(t *testing.T) {
 		SessionsPollSec: 30,
 		GRPCAddr:        "127.0.0.1:0",
 		HTTPAddr:        "127.0.0.1:0",
+		DataDir:         t.TempDir(),
 	})
 	ctx := context.Background()
 	if err := m.Init(ctx); err != nil {
@@ -64,20 +61,12 @@ func TestHandleSSEPlaySessionNotification(t *testing.T) {
 
 	data := `{"PlaySessionStateNotification":{"sessionKey":"99","state":"playing","ratingKey":"12345"}}`
 	m.handleSSEData(ctx, "playing", data)
-	mu.Lock()
-	n := len(events)
-	e0 := events[0]
-	mu.Unlock()
-	if n != 1 || e0 != playbackevents.EventPlaybackStarted {
+	if len(events) != 1 || events[0] != playbackevents.EventPlaybackStarted {
 		t.Fatalf("events: %v", events)
 	}
 
 	m.handleSSEData(ctx, "playing", `{"PlaySessionStateNotification":{"sessionKey":"99","state":"stopped"}}`)
-	mu.Lock()
-	n = len(events)
-	e1 := events[1]
-	mu.Unlock()
-	if n != 2 || e1 != playbackevents.EventPlaybackStopped {
+	if len(events) != 2 || events[1] != playbackevents.EventPlaybackStopped {
 		t.Fatalf("after stop events: %v", events)
 	}
 }
@@ -110,4 +99,14 @@ func TestParsePlaySessionPayload(t *testing.T) {
 		t.Fatalf("n: %+v", n)
 	}
 	_ = b
+}
+
+func TestSSERequestURLWithoutToken(t *testing.T) {
+	url := plexNotificationsURL("http://plex.example:32400")
+	if strings.Contains(url, "X-Plex-Token") || strings.Contains(url, "token=") {
+		t.Fatalf("token leaked in URL: %q", url)
+	}
+	if url != "http://plex.example:32400/:/eventsource/notifications" {
+		t.Fatalf("url: %q", url)
+	}
 }

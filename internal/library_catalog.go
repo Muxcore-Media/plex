@@ -3,11 +3,15 @@ package internal
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
 
 	playbackevents "github.com/Muxcore-Media/contracts-playback/events"
 	playbackv1 "github.com/Muxcore-Media/playback-contract/proto/playbackv1"
 )
+
+const plexCatalogPageSize = 100
 
 type libraryCatalogPayload struct { //nolint:govet // field order matches library catalog event JSON
 	Action          string `json:"action"`
@@ -22,6 +26,9 @@ type libraryCatalogPayload struct { //nolint:govet // field order matches librar
 	FileSizeBytes   int64  `json:"file_size_bytes,omitempty"`
 	VideoResolution string `json:"video_resolution,omitempty"`
 	ParentID        string `json:"parent_id,omitempty"`
+	ImdbID          string `json:"imdb_id,omitempty"`
+	TmdbID          int64  `json:"tmdb_id,omitempty"`
+	TvdbID          int64  `json:"tvdb_id,omitempty"`
 }
 
 func (m *Module) publishLibraryCatalogEvent(ctx context.Context, action string, item libraryCatalogPayload) {
@@ -46,12 +53,17 @@ type plexLibrarySection struct {
 	Title string      `json:"title"`
 }
 
+type plexGuid struct {
+	ID string `json:"id"`
+}
+
 type plexMediaItem struct { //nolint:govet // field order matches Plex API JSON
 	RatingKey       string      `json:"ratingKey"`
 	ParentRatingKey string      `json:"parentRatingKey"`
 	Type            string      `json:"type"`
 	Title           string      `json:"title"`
 	Size            int64       `json:"size"`
+	Guid            []plexGuid  `json:"Guid"`
 	Media           []plexMedia `json:"Media"`
 }
 
@@ -66,12 +78,12 @@ type plexMedia struct {
 }
 
 func (m *Module) listPlexLibrarySections(ctx context.Context) ([]plexLibrarySection, error) {
-	body, code, err := m.plexGET(ctx, "/library/sections")
+	body, code, err := m.plexGET(ctx, "/library/sections", nil)
 	if err != nil {
 		return nil, err
 	}
 	if code >= 300 {
-		return nil, err
+		return nil, fmt.Errorf("plex /library/sections status %d", code)
 	}
 	var resp struct {
 		MediaContainer struct {
@@ -84,24 +96,117 @@ func (m *Module) listPlexLibrarySections(ctx context.Context) ([]plexLibrarySect
 	return resp.MediaContainer.Directory, nil
 }
 
-func (m *Module) listPlexSectionItems(ctx context.Context, sectionKey string) ([]plexMediaItem, error) {
+func sectionItemTypeFilters(sec plexLibrarySection) []string {
+	switch strings.ToLower(strings.TrimSpace(sec.Type)) {
+	case "show":
+		return []string{"4"}
+	case "artist":
+		return []string{"10"}
+	default:
+		return []string{""}
+	}
+}
+
+func (m *Module) listPlexSectionItems(ctx context.Context, section plexLibrarySection) ([]plexMediaItem, error) {
+	key := strings.TrimSpace(section.Key.String())
+	if key == "" {
+		return nil, nil
+	}
+	var all []plexMediaItem
+	for _, typeFilter := range sectionItemTypeFilters(section) {
+		items, err := m.listPlexSectionItemsPaged(ctx, key, typeFilter)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, items...)
+	}
+	return all, nil
+}
+
+func (m *Module) listPlexSectionItemsPaged(ctx context.Context, sectionKey, typeFilter string) ([]plexMediaItem, error) {
 	path := "/library/sections/" + sectionKey + "/all"
-	body, code, err := m.plexGET(ctx, path)
-	if err != nil {
-		return nil, err
+	if typeFilter != "" {
+		path += "?type=" + typeFilter
 	}
-	if code >= 300 {
-		return nil, err
+	var all []plexMediaItem
+	start := 0
+	for {
+		body, code, err := m.plexGET(ctx, path, &plexGETHeaders{
+			ContainerStart: start,
+			ContainerSize:  plexCatalogPageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if code >= 300 {
+			return nil, fmt.Errorf("plex %s status %d", path, code)
+		}
+		var resp struct {
+			MediaContainer struct {
+				Metadata []plexMediaItem `json:"Metadata"`
+				Size     json.Number     `json:"size"`
+				Offset   json.Number     `json:"offset"`
+			} `json:"MediaContainer"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, err
+		}
+		page := resp.MediaContainer.Metadata
+		all = append(all, page...)
+		if len(page) < plexCatalogPageSize {
+			break
+		}
+		total, _ := resp.MediaContainer.Size.Int64()
+		start += len(page)
+		if total > 0 && int64(start) >= total {
+			break
+		}
 	}
-	var resp struct {
-		MediaContainer struct {
-			Metadata []plexMediaItem `json:"Metadata"`
-		} `json:"MediaContainer"`
+	return all, nil
+}
+
+func parsePlexGuids(guids []plexGuid) (imdb string, tmdb, tvdb int64) {
+	for _, g := range guids {
+		id := strings.TrimSpace(g.ID)
+		if id == "" {
+			continue
+		}
+		lower := strings.ToLower(id)
+		switch {
+		case strings.Contains(lower, "imdb://"):
+			if imdb == "" {
+				imdb = plexGUIDValue(id, "imdb://")
+				if imdb != "" && !strings.HasPrefix(imdb, "tt") {
+					imdb = "tt" + imdb
+				}
+			}
+		case strings.Contains(lower, "themoviedb://"):
+			if tmdb == 0 {
+				if v, err := strconv.ParseInt(plexGUIDValue(id, "themoviedb://"), 10, 64); err == nil {
+					tmdb = v
+				}
+			}
+		case strings.Contains(lower, "thetvdb://"):
+			if tvdb == 0 {
+				if v, err := strconv.ParseInt(plexGUIDValue(id, "thetvdb://"), 10, 64); err == nil {
+					tvdb = v
+				}
+			}
+		}
 	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, err
+	return imdb, tmdb, tvdb
+}
+
+func plexGUIDValue(guid, marker string) string {
+	idx := strings.Index(strings.ToLower(guid), strings.ToLower(marker))
+	if idx < 0 {
+		return ""
 	}
-	return resp.MediaContainer.Metadata, nil
+	rest := guid[idx+len(marker):]
+	if q := strings.Index(rest, "?"); q >= 0 {
+		rest = rest[:q]
+	}
+	return strings.TrimSpace(rest)
 }
 
 func plexItemFileSize(item plexMediaItem) int64 {
@@ -146,13 +251,10 @@ func (m *Module) syncLibraryCatalog(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	seen := make(map[string]struct{})
 	published := 0
 	for _, sec := range sections {
-		key := strings.TrimSpace(sec.Key.String())
-		if key == "" {
-			continue
-		}
-		items, err := m.listPlexSectionItems(ctx, key)
+		items, err := m.listPlexSectionItems(ctx, sec)
 		if err != nil {
 			continue
 		}
@@ -160,6 +262,8 @@ func (m *Module) syncLibraryCatalog(ctx context.Context) (int, error) {
 			if it.RatingKey == "" {
 				continue
 			}
+			seen[it.RatingKey] = struct{}{}
+			imdb, tmdb, tvdb := parsePlexGuids(it.Guid)
 			m.publishLibraryCatalogEvent(ctx, "upsert", libraryCatalogPayload{
 				ItemID:          it.RatingKey,
 				MediaType:       it.Type,
@@ -170,7 +274,20 @@ func (m *Module) syncLibraryCatalog(ctx context.Context) (int, error) {
 				MuxcoreID:       "plex:" + it.RatingKey,
 				VideoResolution: plexItemVideoResolution(it),
 				ParentID:        strings.TrimSpace(it.ParentRatingKey),
+				ImdbID:          imdb,
+				TmdbID:          tmdb,
+				TvdbID:          tvdb,
 			})
+			published++
+		}
+	}
+	m.catalogSeenMu.Lock()
+	prev := m.catalogSeenKeys
+	m.catalogSeenKeys = seen
+	m.catalogSeenMu.Unlock()
+	for key := range prev {
+		if _, ok := seen[key]; !ok {
+			m.publishLibraryCatalogEvent(ctx, "removed", libraryCatalogPayload{ItemID: key})
 			published++
 		}
 	}

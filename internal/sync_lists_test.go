@@ -99,7 +99,7 @@ func TestFetchAndParseSyncLists(t *testing.T) {
 }
 
 func TestSyncListsHTTPFilter(t *testing.T) {
-	m := NewModule(Config{GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	m := NewModule(Config{GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0", HTTPSecret: "secret"})
 	m.mu.Lock()
 	m.baseURL = "http://example"
 	m.token = "token"
@@ -114,6 +114,7 @@ func TestSyncListsHTTPFilter(t *testing.T) {
 	m.mu.Unlock()
 
 	req := httptest.NewRequest(http.MethodGet, "/sync-lists?user_id=2", nil)
+	req.Header.Set(headerPlexBridgeSecret, "secret")
 	rec := httptest.NewRecorder()
 	m.handleSyncListsHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -125,6 +126,26 @@ func TestSyncListsHTTPFilter(t *testing.T) {
 	}
 	if len(body.Lists) != 1 || body.Lists[0].DeviceUserID != "2" {
 		t.Fatalf("filtered: %#v", body.Lists)
+	}
+}
+
+func TestSyncListsHTTPUnauthorized(t *testing.T) {
+	m := NewModule(Config{GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0", HTTPSecret: "secret"})
+	rec := httptest.NewRecorder()
+	m.handleSyncListsHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync-lists", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: %d", rec.Code)
+	}
+}
+
+func TestSyncListsHTTPUnauthorizedEmptySecret(t *testing.T) {
+	m := NewModule(Config{GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sync-lists", nil)
+	req.Header.Set(headerPlexBridgeSecret, "anything")
+	m.handleSyncListsHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: %d", rec.Code)
 	}
 }
 

@@ -56,7 +56,7 @@ func (m *Module) machineIdentifier(ctx context.Context) (string, error) {
 	if cached != "" {
 		return cached, nil
 	}
-	body, code, err := m.plexGET(ctx, "/identity")
+	body, code, err := m.plexGET(ctx, "/identity", nil)
 	if err != nil {
 		return "", err
 	}

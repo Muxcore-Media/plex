@@ -33,6 +33,7 @@ type Module struct { //nolint:govet // fieldalignment: lifecycle fields grouped 
 
 	sessionSeen map[string]string
 	stopCh      chan struct{}
+	meshDownCh  chan struct{}
 	mc          *client.Client
 	httpCli     *http.Client
 
@@ -40,6 +41,8 @@ type Module struct { //nolint:govet // fieldalignment: lifecycle fields grouped 
 	baseURL         string
 	httpAddr        string
 	grpcAddr        string
+	dataDir         string
+	httpSecretVal   string
 	machineID       string
 	plexTVBaseURL   string
 	id              string
@@ -49,9 +52,14 @@ type Module struct { //nolint:govet // fieldalignment: lifecycle fields grouped 
 	syncListsMu    sync.RWMutex
 	syncListsCache syncListsSnapshot
 
-	sseMu          sync.RWMutex
-	sseConnected   bool
-	sseEnabledFlag bool
+	sseMu           sync.RWMutex
+	sseActivityMu   sync.Mutex
+	sseLastActivity time.Time
+	sseConnected    bool
+	sseEnabledFlag  bool
+
+	catalogSeenMu   sync.Mutex
+	catalogSeenKeys map[string]struct{}
 
 	mu sync.RWMutex
 }
@@ -60,6 +68,8 @@ type Config struct { //nolint:govet // fieldalignment: config fields grouped for
 	ID              string
 	BaseURL         string
 	Token           string
+	DataDir         string
+	HTTPSecret      string
 	SessionsPollSec int
 	GRPCAddr        string
 	HTTPAddr        string
@@ -78,32 +88,49 @@ func NewModule(cfg Config) *Module {
 	if cfg.SessionsPollSec <= 0 {
 		cfg.SessionsPollSec = 30
 	}
-	if v := os.Getenv("PLEX_URL"); v != "" {
-		cfg.BaseURL = v
-	}
-	if v := os.Getenv("PLEX_TOKEN"); v != "" {
-		cfg.Token = v
-	}
-	if v := os.Getenv("PLEX_SESSIONS_POLL_SEC"); v != "" {
-		if n, err := parseInt(v); err == nil && n > 0 {
-			cfg.SessionsPollSec = n
-		}
-	}
-	if v := os.Getenv("PLEX_GRPC_ADDR"); v != "" {
+	if v := os.Getenv("PLEX_GRPC_ADDR"); v != "" && cfg.GRPCAddr == "" {
 		cfg.GRPCAddr = v
 	}
-	if v := os.Getenv("PLEX_HTTP_ADDR"); v != "" {
+	if v := os.Getenv("PLEX_HTTP_ADDR"); v != "" && cfg.HTTPAddr == "" {
 		cfg.HTTPAddr = v
+	}
+	if cfg.DataDir == "" {
+		if v := os.Getenv("PLEX_DATA_DIR"); v != "" {
+			cfg.DataDir = v
+		}
+	}
+	if cfg.DataDir == "" {
+		cfg.DataDir = "/var/lib/muxcore-plex"
+	}
+	if v := os.Getenv("PLEX_URL"); v != "" && cfg.BaseURL == "" {
+		cfg.BaseURL = v
+	}
+	if v := os.Getenv("PLEX_TOKEN"); v != "" && cfg.Token == "" {
+		cfg.Token = v
+	}
+	if v := os.Getenv("PLEX_HTTP_SECRET"); v != "" && cfg.HTTPSecret == "" {
+		cfg.HTTPSecret = v
+	}
+	if cfg.SessionsPollSec == 30 {
+		if v := os.Getenv("PLEX_SESSIONS_POLL_SEC"); v != "" {
+			if n, err := parseInt(v); err == nil && n > 0 {
+				cfg.SessionsPollSec = n
+			}
+		}
 	}
 	return &Module{
 		id:              cfg.ID,
 		baseURL:         trimSlash(cfg.BaseURL),
 		token:           cfg.Token,
+		dataDir:         cfg.DataDir,
+		httpSecretVal:   cfg.HTTPSecret,
 		sessionsPollSec: cfg.SessionsPollSec,
 		grpcAddr:        cfg.GRPCAddr,
 		httpAddr:        cfg.HTTPAddr,
 		stopCh:          make(chan struct{}),
+		meshDownCh:      make(chan struct{}, 1),
 		sessionSeen:     map[string]string{},
+		catalogSeenKeys: map[string]struct{}{},
 		httpCli:         &http.Client{Timeout: 20 * time.Second},
 		sseEnabledFlag:  envSSEEnabled(os.Getenv("PLEX_SSE")),
 	}
@@ -128,6 +155,12 @@ func (m *Module) Info() contracts.ModuleInfo {
 }
 
 func (m *Module) Init(ctx context.Context) error {
+	if err := os.MkdirAll(m.dataDir, 0o700); err != nil {
+		return fmt.Errorf("create data dir %s: %w", m.dataDir, err)
+	}
+	if err := m.loadDurable(); err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
 	var lc net.ListenConfig
 	lis, err := lc.Listen(ctx, "tcp", m.grpcAddr)
 	if err != nil {
@@ -140,7 +173,7 @@ func (m *Module) Init(ctx context.Context) error {
 		return fmt.Errorf("listen HTTP %s: %w", m.httpAddr, err)
 	}
 	m.httpLis = httpLis
-	slog.Info("plex bridge initialized", "grpc", m.grpcAddr, "http", m.httpAddr, "poll_sec", m.sessionsPollSec)
+	slog.Info("plex bridge initialized", "grpc", m.grpcAddr, "http", m.httpAddr, "data_dir", m.dataDir, "poll_sec", m.sessionsPollSec)
 	return nil
 }
 
@@ -157,10 +190,7 @@ func (m *Module) Start(ctx context.Context) error {
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	mux.HandleFunc("GET /healthz", m.handleHealthz)
 	mux.HandleFunc("GET /sync-lists", m.handleSyncListsHTTP)
 	m.httpSrv = &http.Server{
 		Handler:           mux,
@@ -180,6 +210,17 @@ func (m *Module) Start(ctx context.Context) error {
 	return nil
 }
 
+func (m *Module) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if err := m.Health(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"status": "error",
+			"error":  err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (m *Module) Stop(ctx context.Context) error {
 	select {
 	case <-m.stopCh:
@@ -197,13 +238,7 @@ func (m *Module) Stop(ctx context.Context) error {
 	} else if m.httpLis != nil {
 		_ = m.httpLis.Close()
 	}
-	m.mu.Lock()
-	mc := m.mc
-	m.mc = nil
-	m.mu.Unlock()
-	if mc != nil {
-		_ = mc.Close()
-	}
+	m.invalidateMeshClient()
 	slog.Info("plex bridge stopped")
 	return nil
 }
@@ -256,7 +291,43 @@ func (m *Module) connectCore() {
 		m.mc = c
 		m.mu.Unlock()
 		slog.Info("plex: connected to core mesh", "addr", addr)
-		return
+		backoff = time.Second
+
+		select {
+		case <-m.stopCh:
+			return
+		case <-m.meshDownCh:
+			m.mu.Lock()
+			if m.mc == c {
+				_ = m.mc.Close()
+				m.mc = nil
+			}
+			m.mu.Unlock()
+			slog.Warn("plex: mesh client invalidated, reconnecting")
+		}
+
+		select {
+		case <-m.stopCh:
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+func (m *Module) invalidateMeshClient() {
+	m.mu.Lock()
+	mc := m.mc
+	m.mc = nil
+	m.mu.Unlock()
+	if mc != nil {
+		_ = mc.Close()
+	}
+	select {
+	case m.meshDownCh <- struct{}{}:
+	default:
 	}
 }
 
@@ -270,13 +341,21 @@ var testPublishHook func(ctx context.Context, eventType, source string, payload 
 
 func (m *Module) publishEvent(ctx context.Context, eventType string, payload []byte) error {
 	if testPublishHook != nil {
-		return testPublishHook(ctx, eventType, m.id, payload)
+		err := testPublishHook(ctx, eventType, m.id, payload)
+		if err != nil {
+			m.invalidateMeshClient()
+		}
+		return err
 	}
 	mc := m.eventClient()
 	if mc == nil {
 		return nil
 	}
-	return mc.Events.Publish(ctx, eventType, m.id, payload)
+	err := mc.Events.Publish(ctx, eventType, m.id, payload)
+	if err != nil {
+		m.invalidateMeshClient()
+	}
+	return err
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

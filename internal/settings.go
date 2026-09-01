@@ -2,13 +2,17 @@ package internal
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	plexv1 "github.com/Muxcore-Media/plex/proto/plexv1"
 )
+
+const headerPlexBridgeSecret = "X-Plex-Bridge-Secret"
 
 func (m *Module) Settings() []contracts.SettingDef {
 	return m.settingsDefs()
@@ -86,10 +90,27 @@ func (m *Module) updateSetting(key, value string) error {
 			m.sessionsPollSec = n
 			m.mu.Unlock()
 		}
+	case "plex_sse", "PLEX_SSE":
+		enabled := parseSSESetting(value)
+		m.mu.Lock()
+		m.sseEnabledFlag = enabled
+		m.mu.Unlock()
 	default:
 		return fmt.Errorf("unknown setting %q", key)
 	}
-	return nil
+	return m.persistDurable()
+}
+
+func parseSSESetting(value string) bool {
+	v := strings.TrimSpace(strings.ToLower(value))
+	switch v {
+	case "0", "false", "no", "off", "disabled":
+		return false
+	case "1", "true", "yes", "on", "enabled":
+		return true
+	default:
+		return envSSEEnabled(value)
+	}
 }
 
 func sseSettingValue(m *Module) string {
@@ -99,16 +120,90 @@ func sseSettingValue(m *Module) string {
 	return "disabled"
 }
 
+func (m *Module) httpSecret() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.httpSecretVal != "" {
+		return m.httpSecretVal
+	}
+	return os.Getenv("PLEX_HTTP_SECRET")
+}
+
+func (m *Module) checkHTTPSecret(provided string) bool {
+	secret := m.httpSecret()
+	if secret == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) == 1
+}
+
 func (m *Module) Status(ctx context.Context, _ *plexv1.StatusRequest) (*plexv1.StatusResponse, error) {
 	m.mu.RLock()
 	base := m.baseURL
 	active := int32(m.lastActive) //nolint:gosec // active session count from Plex fits int32 status field
+	machineID := m.machineID
 	m.mu.RUnlock()
+	if machineID == "" && m.configured() {
+		if id, err := m.machineIdentifier(ctx); err == nil {
+			machineID = id
+		}
+	}
 	return &plexv1.StatusResponse{
 		Configured:     m.configured(),
 		BaseUrl:        base,
 		ActiveSessions: active,
+		SseConnected:   m.sseConnectedNow(),
+		MachineId:      machineID,
 	}, nil
+}
+
+func (m *Module) ListSessions(ctx context.Context, _ *plexv1.ListSessionsRequest) (*plexv1.ListSessionsResponse, error) {
+	if !m.configured() {
+		return &plexv1.ListSessionsResponse{}, nil
+	}
+	sessions, err := m.listSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := &plexv1.ListSessionsResponse{}
+	for _, s := range sessions {
+		sessionID := s.SessionKey
+		if sessionID == "" {
+			sessionID = s.User.ID.String() + ":" + s.RatingKey
+		}
+		paused := sessionPaused(s)
+		if state := strings.ToLower(strings.TrimSpace(m.sessionState(s.SessionKey))); state == "paused" {
+			paused = true
+		}
+		out.Sessions = append(out.Sessions, &plexv1.PlexSessionMessage{
+			SessionId:       sessionID,
+			UserId:          s.User.ID.String(),
+			UserName:        s.User.Title,
+			ItemId:          s.RatingKey,
+			Title:           displayTitle(s),
+			PositionSeconds: msToSeconds(s.ViewOffset),
+			DurationSeconds: msToSeconds(s.Duration),
+			Paused:          paused,
+			Device:          firstNonEmpty(s.Player.Title, s.Player.Platform),
+		})
+	}
+	return out, nil
+}
+
+func (m *Module) PlayURL(_ context.Context, req *plexv1.PlayURLRequest) (*plexv1.PlayURLResponse, error) {
+	m.mu.RLock()
+	base := m.baseURL
+	machineID := m.machineID
+	m.mu.RUnlock()
+	ratingKey := strings.TrimSpace(req.GetRatingKey())
+	if base == "" || ratingKey == "" {
+		return nil, fmt.Errorf("base_url and rating_key required")
+	}
+	if machineID == "" {
+		return nil, fmt.Errorf("machine_id unknown; probe /identity first")
+	}
+	u := fmt.Sprintf("%s/web/index.html#!/server/%s/details?key=/library/metadata/%s", base, machineID, ratingKey)
+	return &plexv1.PlayURLResponse{Url: u}, nil
 }
 
 func (m *Module) TerminateSession(ctx context.Context, req *plexv1.TerminateSessionRequest) (*plexv1.TerminateSessionResponse, error) {
@@ -121,7 +216,7 @@ func (m *Module) TerminateSession(ctx context.Context, req *plexv1.TerminateSess
 		q.Set("reason", r)
 	}
 	path := "/status/sessions/terminate?" + q.Encode()
-	_, code, err := m.plexGET(ctx, path)
+	_, code, err := m.plexGET(ctx, path, nil)
 	if err != nil {
 		return &plexv1.TerminateSessionResponse{Ok: false, Error: err.Error()}, nil //nolint:nilerr // application-level failure encoded in response
 	}

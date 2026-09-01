@@ -78,6 +78,7 @@ func TestPlexSessionPollPublishesEvents(t *testing.T) {
 		SessionsPollSec: 30,
 		GRPCAddr:        "127.0.0.1:0",
 		HTTPAddr:        "127.0.0.1:0",
+		DataDir:         t.TempDir(),
 	})
 	ctx := context.Background()
 	if err := m.Init(ctx); err != nil {
@@ -113,6 +114,17 @@ func TestPlexSessionPollPublishesEvents(t *testing.T) {
 	}
 }
 
+func TestTerminateSessionEmptyID(t *testing.T) {
+	m := NewModule(Config{GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	resp, err := m.TerminateSession(context.Background(), &plexv1.TerminateSessionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.GetOk() || resp.GetError() != "session_id required" {
+		t.Fatalf("resp=%+v", resp)
+	}
+}
+
 func TestTerminateSession(t *testing.T) {
 	var hit string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +137,7 @@ func TestTerminateSession(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := NewModule(Config{BaseURL: srv.URL, Token: "tok", GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	m := NewModule(Config{BaseURL: srv.URL, Token: "tok", GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0", DataDir: t.TempDir()})
 	ctx := context.Background()
 	if err := m.Init(ctx); err != nil {
 		t.Fatal(err)
@@ -158,5 +170,104 @@ func TestSessionToEvent(t *testing.T) {
 	}
 	if ev.Title != "Series — Pilot" || !ev.IsTranscode {
 		t.Fatalf("title/transcode: %+v", ev)
+	}
+}
+
+func TestHealthConfiguredVsEmpty(t *testing.T) {
+	m := NewModule(Config{GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	if err := m.Health(context.Background()); err == nil {
+		t.Fatal("expected unconfigured error")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/identity" {
+			_, _ = w.Write([]byte(`{"MediaContainer":{"machineIdentifier":"mid-1"}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	m2 := NewModule(Config{BaseURL: srv.URL, Token: "tok", GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	if err := m2.Health(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHealthz503WhenUnconfigured(t *testing.T) {
+	m := NewModule(Config{GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	rec := httptest.NewRecorder()
+	m.handleHealthz(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHealthzOKWhenConfigured(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/identity" {
+			_, _ = w.Write([]byte(`{"MediaContainer":{"machineIdentifier":"mid-1"}}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	m := NewModule(Config{BaseURL: srv.URL, Token: "tok", GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0", DataDir: t.TempDir()})
+	rec := httptest.NewRecorder()
+	m.handleHealthz(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPlayURL(t *testing.T) {
+	m := NewModule(Config{BaseURL: "http://plex.example:32400", GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	m.mu.Lock()
+	m.machineID = "machine-abc"
+	m.mu.Unlock()
+	resp, err := m.PlayURL(context.Background(), &plexv1.PlayURLRequest{RatingKey: "999"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "http://plex.example:32400/web/index.html#!/server/machine-abc/details?key=/library/metadata/999"
+	if resp.GetUrl() != want {
+		t.Fatalf("url: %q", resp.GetUrl())
+	}
+}
+
+func TestPersistSettings(t *testing.T) {
+	dir := t.TempDir()
+	m := NewModule(Config{
+		BaseURL:  "http://plex.local:32400",
+		Token:    "secret-token",
+		DataDir:  dir,
+		GRPCAddr: "127.0.0.1:0",
+		HTTPAddr: "127.0.0.1:0",
+	})
+	ctx := context.Background()
+	if err := m.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	m2 := NewModule(Config{DataDir: dir, GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	if err := m2.loadDurable(); err != nil {
+		t.Fatal(err)
+	}
+	if !m2.configured() || m2.baseURL != "http://plex.local:32400" {
+		t.Fatalf("reloaded: url=%q configured=%v", m2.baseURL, m2.configured())
+	}
+}
+
+func TestUpdateSettingPlexSSE(t *testing.T) {
+	dir := t.TempDir()
+	m := NewModule(Config{DataDir: dir, GRPCAddr: "127.0.0.1:0", HTTPAddr: "127.0.0.1:0"})
+	if err := m.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.UpdateSetting("plex_sse", "disabled"); err != nil {
+		t.Fatal(err)
+	}
+	if m.sseEnabled() {
+		t.Fatal("expected sse disabled")
 	}
 }
