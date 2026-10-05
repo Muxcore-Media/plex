@@ -17,10 +17,9 @@ import (
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	"github.com/Muxcore-Media/core/sdk/go/client"
 	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
+	manifest "github.com/Muxcore-Media/plex"
 	plexv1 "github.com/Muxcore-Media/plex/proto/plexv1"
 )
-
-const moduleVersion = "0.1.0"
 
 type Module struct { //nolint:govet // fieldalignment: lifecycle fields grouped for readability
 	plexv1.UnimplementedPlexBridgeServiceServer
@@ -140,7 +139,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 	return contracts.ModuleInfo{
 		ID:          m.id,
 		Name:        "Plex Playback Bridge",
-		Version:     moduleVersion,
+		Version:     modulesdk.ManifestVersion(manifest.ManifestJSON),
 		Roles:       []string{"playback"},
 		Description: "Plex session poll and playback mesh events",
 		Author:      "MuxCore",

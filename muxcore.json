@@ -1,7 +1,7 @@
 {
   "name": "Plex Playback Bridge",
   "description": "Plex bridge — session poll and playback mesh events for playback-monitor (Tautulli / Tracearr parity)",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "author": "MuxCore",
   "roles": [
     "playback"
