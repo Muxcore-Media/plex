@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	playbackevents "github.com/Muxcore-Media/contracts-playback/events"
-	playbackv1 "github.com/Muxcore-Media/playback-contract/proto/playbackv1"
+	playbackv1 "github.com/Muxcore-Media/contracts-playback/playbackv1"
 )
 
 const plexCatalogPageSize = 100

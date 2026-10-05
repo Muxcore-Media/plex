@@ -1,6 +1,6 @@
 package internal
 
-import playbackv1 "github.com/Muxcore-Media/playback-contract/proto/playbackv1"
+import playbackv1 "github.com/Muxcore-Media/contracts-playback/playbackv1"
 
 func streamResolutionFromPlexSession(s plexSession) string {
 	return playbackv1.NormalizeStreamResolution(s.Height, s.Width, "")
