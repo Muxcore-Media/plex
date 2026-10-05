@@ -17,6 +17,7 @@ import (
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	"github.com/Muxcore-Media/core/sdk/go/client"
 	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
+	"github.com/Muxcore-Media/core/sdk/go/module/meshtls"
 	manifest "github.com/Muxcore-Media/plex"
 	plexv1 "github.com/Muxcore-Media/plex/proto/plexv1"
 )
@@ -179,7 +180,11 @@ func (m *Module) Init(ctx context.Context) error {
 func (m *Module) Start(ctx context.Context) error {
 	runCtx, runCancel := context.WithCancel(context.WithoutCancel(ctx))
 	m.runCancel = runCancel
-	m.grpcSrv = grpc.NewServer()
+	srvOpt, err := meshtls.ServerOption()
+	if err != nil {
+		return fmt.Errorf("grpc mesh TLS: %w", err)
+	}
+	m.grpcSrv = grpc.NewServer(srvOpt)
 	plexv1.RegisterPlexBridgeServiceServer(m.grpcSrv, m)
 	modulesdk.RegisterSettings(m.grpcSrv, m.id, m)
 	go func() {

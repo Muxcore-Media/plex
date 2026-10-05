@@ -6,7 +6,7 @@ require (
 	github.com/Muxcore-Media/contracts-playback v0.2.0
 	github.com/Muxcore-Media/core/pkg/contracts v0.6.0
 	github.com/Muxcore-Media/core/sdk/go/client v0.6.1
-	github.com/Muxcore-Media/core/sdk/go/module v0.6.4
+	github.com/Muxcore-Media/core/sdk/go/module v0.6.5
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
 )
