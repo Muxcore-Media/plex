@@ -278,7 +278,7 @@ func (m *Module) setSSEConnected(v bool) {
 
 func (m *Module) sseConnectedNow() bool {
 	m.sseMu.RLock()
-	defer m.sseMu.Unlock()
+	defer m.sseMu.RUnlock()
 	return m.sseConnected
 }
 

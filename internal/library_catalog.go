@@ -143,9 +143,9 @@ func (m *Module) listPlexSectionItemsPaged(ctx context.Context, sectionKey, type
 		}
 		var resp struct {
 			MediaContainer struct {
-				Metadata []plexMediaItem `json:"Metadata"`
 				Size     json.Number     `json:"size"`
 				Offset   json.Number     `json:"offset"`
+				Metadata []plexMediaItem `json:"Metadata"`
 			} `json:"MediaContainer"`
 		}
 		if err := json.Unmarshal(body, &resp); err != nil {

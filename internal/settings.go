@@ -12,7 +12,7 @@ import (
 	plexv1 "github.com/Muxcore-Media/plex/proto/plexv1"
 )
 
-const headerPlexBridgeSecret = "X-Plex-Bridge-Secret"
+const headerPlexBridgeSecret = "X-Plex-Bridge-Secret" //nolint:gosec // HTTP header name, not a credential
 
 func (m *Module) Settings() []contracts.SettingDef {
 	return m.settingsDefs()

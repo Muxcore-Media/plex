@@ -8,10 +8,10 @@ import (
 )
 
 type durableSettings struct {
+	SSEEnabled      *bool  `json:"plex_sse_enabled,omitempty"`
 	BaseURL         string `json:"base_url"`
 	Token           string `json:"token"`
 	SessionsPollSec int    `json:"sessions_poll_seconds"`
-	SSEEnabled      *bool  `json:"plex_sse_enabled,omitempty"`
 }
 
 func (m *Module) settingsPath() string {
@@ -20,7 +20,7 @@ func (m *Module) settingsPath() string {
 
 func (m *Module) loadDurable() error {
 	path := m.settingsPath()
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is settings.json under the operator-configured data dir
 	if err != nil {
 		if os.IsNotExist(err) {
 			return m.persistDurable()
