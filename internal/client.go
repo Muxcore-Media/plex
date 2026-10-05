@@ -22,6 +22,9 @@ func (m *Module) plexGET(ctx context.Context, path string, headers *plexGETHeade
 	if base == "" || token == "" {
 		return nil, 0, fmt.Errorf("plex not configured")
 	}
+	if err := guardOutboundURL(base + path); err != nil {
+		return nil, 0, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, http.NoBody)
 	if err != nil {
 		return nil, 0, err

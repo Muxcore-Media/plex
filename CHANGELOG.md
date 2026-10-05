@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+- Outbound Plex and plex.tv URLs go through netguard Integration (private LAN and loopback allowed; link-local, cloud metadata, and non-HTTP schemes refused). Settings reject a blocked base URL. The notification SSE dial uses the same guard (NFR-SEC-009).
+
 ## [0.1.5] - 2026-10-05
 
 

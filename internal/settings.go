@@ -75,8 +75,12 @@ func (m *Module) settingsDefs() []contracts.SettingDef {
 func (m *Module) updateSetting(key, value string) error {
 	switch key {
 	case "plex_url", "PLEX_URL":
+		next := trimSlash(value)
+		if err := guardOutboundURL(next); err != nil {
+			return err
+		}
 		m.mu.Lock()
-		m.baseURL = trimSlash(value)
+		m.baseURL = next
 		m.mu.Unlock()
 	case "plex_token", "PLEX_TOKEN":
 		if value != "" && value != "••••" {

@@ -131,7 +131,7 @@ func NewModule(cfg Config) *Module {
 		meshDownCh:      make(chan struct{}, 1),
 		sessionSeen:     map[string]string{},
 		catalogSeenKeys: map[string]struct{}{},
-		httpCli:         &http.Client{Timeout: 20 * time.Second},
+		httpCli:         newGuardedClient(20 * time.Second),
 		sseEnabledFlag:  envSSEEnabled(os.Getenv("PLEX_SSE")),
 	}
 }

@@ -29,6 +29,9 @@ func (m *Module) plexTVGET(ctx context.Context, path string) ([]byte, int, error
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
+	if err := guardOutboundURL(base + path); err != nil {
+		return nil, 0, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, http.NoBody)
 	if err != nil {
 		return nil, 0, err

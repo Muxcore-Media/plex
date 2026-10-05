@@ -70,6 +70,9 @@ func (m *Module) runSSEConnection(ctx context.Context) error {
 	base, token := m.baseURL, m.token
 	m.mu.RUnlock()
 	reqURL := plexNotificationsURL(base)
+	if err := guardOutboundURL(reqURL); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, http.NoBody)
 	if err != nil {
 		return err
@@ -79,7 +82,10 @@ func (m *Module) runSSEConnection(ctx context.Context) error {
 	req.Header.Set("X-Plex-Product", "MuxCore")
 	req.Header.Set("X-Plex-Client-Identifier", "muxcore-plex-bridge")
 
-	sseClient := &http.Client{Timeout: 0}
+	// Long-lived stream: the guard still checks the dial, with a day-long cap
+	// so a metadata redirect cannot sit open forever. netguard treats Timeout
+	// <= 0 as 30s, which would kill the event stream.
+	sseClient := newGuardedClient(24 * time.Hour)
 	resp, err := sseClient.Do(req)
 	if err != nil {
 		return err
